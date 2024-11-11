@@ -24,12 +24,14 @@ class PlanetMiner:
         self.window = self.get_window()
         self.set_window_size()
         self.window_properties = self.get_window_properties()
-        # self.model = YOLO(model_path)
+        self.model = YOLO(model_path)
+        self.zoom_set = False
+        self.set_zoom()
         #print model class names
         # print(self.model.names)
         # Load the YOLOv8 model once during initialization
-        # self.networthmodel = YOLO('Models/networth.pt')
-        # self.networthmodel_class_names = {0: "Cash", 1: "DarkMatter", 2: "GalaxyCredits", 3: "GalaxyValue"}  # Class names mapping
+        self.networthmodel = YOLO('Models/networth.pt')
+        self.networthmodel_class_names = {0: "Cash", 1: "DarkMatter", 2: "GalaxyCredits", 3: "GalaxyValue"}  # Class names mapping
 
     def get_window(self, emulator="MEmu"):
         """
@@ -67,6 +69,25 @@ class PlanetMiner:
                 print("Window is already at the specified size and position.")
         else:
             print("Cannot set window size because MEmu window was not found.")
+
+    def set_zoom(self, zoom_factor=6):
+        "Set the zoom out level of the emulator window."
+        if not self.zoom_set and self.window:
+            #center mouse position in the middle of the screen
+            pyautogui.moveTo(self.window.left + self.window.width//2, self.window.top + self.window.height//2)
+            #ZOom in fully first
+            #hold ctrl
+            pyautogui.keyDown('ctrl')
+            pyautogui.scroll(20)  # Zoom in by scrolling up
+            #
+            pyautogui.keyDown('ctrl')
+            for i in range(zoom_factor):
+                pyautogui.scroll(-1)  # Zoom out by scrolling up
+            # pyautogui.scroll(-zoom_factor)  # Zoom out by scrolling down
+            #release ctrl
+            pyautogui.keyUp('ctrl')
+            #determine the mouse position to zoom out from the center
+            self.zoom_set = True    
 
     def get_window_properties(self):
         """
@@ -267,8 +288,168 @@ class PlanetMiner:
             print("Cannot retrieve net worth because window properties were not found.")
             return None
 
+class Planets(PlanetMiner):
+    def __init__(self):
+        super().__init__()
+        self.planet_model = YOLO('Models/planets.pt')
+        self.planet_locked_model = YOLO('Models/locked_planets.pt')
+        self.class_names = self.planet_model.names  # Get class names mapping from the model
+        self.class_names_locked = self.planet_locked_model.names  # Get class names mapping from the model
+        print("Planet class names:", self.class_names)
+        # print("Locked planet class names:", self.class_names_locked)
+
+    def find_locked_planets(self):
+        """
+        Find the locked planets on the screen and return their positions.
+        """
+        # Capture screenshot of the screen or specific region
+        screenshot = pyautogui.screenshot()
+        screenshot = np.array(screenshot)  # Convert to numpy array
+        screenshot = cv2.cvtColor(screenshot, cv2.COLOR_RGB2BGR)  # Convert colors for OpenCV
+        
+        # Predict locked planets on the screenshot
+        results = self.planet_locked_model.predict(screenshot)
+        
+        # Extract positions of locked planets and put them in a dictionary for each planet
+        locked_positions = {}
+        for box in results[0].boxes:  # Access the first (and only) element in results
+            # Each box contains information about position and class id
+            x1, y1, x2, y2 = map(int, box.xyxy[0])  # Extract the bounding box coordinates
+            class_id = int(box.cls[0])  # Get class ID from box.cls
+            class_name = self.class_names_locked[class_id]  # Map class ID to name
+            # print(f"Detected locked planet: {class_name} at ({x1}, {y1}) - ({x2}, {y2})")
+            
+            locked_positions[class_name] = (x1, y1, x2, y2)
+
+        return locked_positions
+
+    def purchase_locked_planet(self, locked_position, planet_name):
+        """
+        Purchase a locked planet by clicking on the specified position.
+        """
+        if locked_position:
+            if self.can_purchase(planet_name):
+                # Click the center of the locked planet to purchase it
+                x_center = (locked_position[0] + locked_position[2]) // 2
+                y_center = (locked_position[1] + locked_position[3]) // 2
+                pyautogui.moveTo(x_center, y_center)
+                pyautogui.click(x_center, y_center)
+                print("Purchased locked planet.")
+        else:
+            print("No locked planet position provided. Cannot purchase.")
+        return
+    
+    def can_purchase(self, planet_name):
+        """Checks if we can purchase a planet based on the price and our networth cash"""
+        planet_purchase_prices = {"Balor_locked": 100, "Drasta_locked": 200, "Anadius_locked": 500, "Dholen_locked": 1250}
+        networth = self.get_networth()
+        if networth:
+            # Get the cash value from the net worth data
+            cash = int(networth.get("Cash", 0))
+            print("Cash:", cash)
+            planet_price = planet_purchase_prices.get(planet_name, 0)
+            
+            # Check if we can afford the planet
+            return cash >= planet_price
+        return False
 
 
+    def purchase_next(self):
+        """
+        Purchase the next locked planet if available and purchaseable.
+        """
+        locked_positions = self.find_locked_planets()
+        print("Locked planet positions:", locked_positions)
+        
+        # Define the purchase order for planets (based on price or priority)
+        purchase_order = ["Balor_locked", "Drasta_locked", "Anadius_locked", "Dholen_locked"]
+        
+        # Attempt to purchase the first affordable planet in the purchase order
+        for planet_name in purchase_order:
+            if planet_name in locked_positions:
+                position = locked_positions[planet_name]
+                
+                # Check if we can afford the planet
+                if self.can_purchase(planet_name):
+                    self.purchase_locked_planet(position, planet_name)
+                    print(f"Purchased {planet_name}")
+                    return  True
+                else:
+                    print(f"Cannot afford {planet_name}.")
+                
+        
+        print("No affordable locked planets available for purchase.")
+        return False
+    
+    def find_planet(self, planet_name):
+        """
+        Use the self.planet_model to find all planets and return the positions of the specified planet_name.
+
+        Parameters:
+        - planet_name (str): The name of the planet to find. 
+        {0: 'Acheron -8-', 1: 'Anadius -3-', 2: 'Balor -1-', 3: 'Batalla -14-', 4: 'Castellus -17-', 5: 'Dholen -4-', 6: 'Drasta -2-', 7: 'Gorgon -18-', 8: 'Imir -11-', 9: 'Micha -15-', 10: 'Newton -6-', 11: 'Nith -13-', 12: 'No Object -0-', 13: 'Paranitha -19-', 14: 'Pranas -16-', 15: 'Relic -12-', 16: 'Solveig -10-', 17: 'Verr -5-', 18: 'Widow -7-', 19: 'Yangtze -9-'}
+
+        Returns:
+        - positions (list of tuples): A list of bounding boxes (x1, y1, x2, y2) for each detected instance of the planet.
+        - Returns None if the planet is not found or an error occurs.
+        """
+        if self.window_properties:
+            # Define the bounding box for the emulator window
+            top_left = self.window_properties["top_left"]
+            bottom_right = self.window_properties["bottom_right"]
+            bbox = (top_left[0], top_left[1], bottom_right[0], bottom_right[1])
+
+            try:
+                # Capture the specified area
+                screenshot = ImageGrab.grab(bbox)
+                # Convert to OpenCV format
+                frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+                # Use the YOLO model to predict objects in the frame
+                results = self.planet_model.predict(frame, imgsz=640, conf=0.7)
+
+                positions = []
+                for det in results[0].boxes:
+                    class_id = int(det.cls[0])
+                    class_name = self.class_names.get(class_id, "Unknown")
+                    if planet_name in class_name:
+                        # Get bounding box coordinates in (x1, y1, x2, y2) format
+                        x1, y1, x2, y2 = map(int, det.xyxy[0])
+                        # Adjust coordinates to screen position
+                        x1 += self.window.left
+                        y1 += self.window.top
+                        x2 += self.window.left
+                        y2 += self.window.top
+                        positions.append((x1, y1, x2, y2))
+
+                if positions:
+                    print(f"Found {len(positions)} instance(s) of planet '{planet_name}'.")
+                    return positions
+                else:
+                    print(f"Planet '{planet_name}' not found.")
+                    return None
+            except Exception as e:
+                print(f"Failed to find planet '{planet_name}': {e}")
+                return None
+        else:
+            print("Cannot find planet because window properties were not found.")
+            return None
+    
+    def open_planet_menu(self, planet_name):
+        """
+        Open the menu for a specific planet by clicking on the planet icon.
+        """
+        positions = self.find_planet(planet_name)
+        if positions:
+            # Click the center of the first detected planet
+            x_center = (positions[0][0] + positions[0][2]) // 2
+            y_center = (positions[0][1] + positions[0][3]) // 2
+            pyautogui.click(x_center, y_center)
+            print(f"Opened menu for planet '{planet_name}'.")
+            return True
+        else:
+            print(f"Cannot open menu for planet '{planet_name}'.")
+            return False
 class PlanetMenu(PlanetMiner):
     def __init__(self):
         super().__init__()  # Initialize PlanetMiner to get window properties
@@ -276,7 +457,6 @@ class PlanetMenu(PlanetMiner):
         self.class_names = self.model.names  # Get class names mapping from the model
         # print(self.class_names)
         print("Model class names:", self.class_names)
-
 
     def is_open(self):
         """
@@ -358,13 +538,11 @@ class PlanetMenu(PlanetMiner):
                 # Use YOLO model to detect icons in the screenshot
                 results = self.model.predict(frame, imgsz=640, conf=0.9)
 
-                self.get_upgrade_prices(results, frame)
-                self.get_planet_levels(results, frame)
-                self.get_upgrade_multiplier(results, frame)
-                self.get_planet_resources(results, frame)
-                return results
-
-
+                # self.get_upgrade_prices(results, frame)
+                # self.get_planet_levels(results, frame)
+                # self.get_upgrade_multiplier(results, frame)
+                # self.get_planet_resources(results, frame)
+                return results, frame
     def get_planet_resources(self, results, frame):
         """
         Extract the resource values from the menu by OCR-ing the table under the detected headers.
@@ -508,7 +686,6 @@ class PlanetMenu(PlanetMiner):
             cleaned_text = raw_text.strip()
 
         return cleaned_text
-
 
     def get_upgrade_prices(self, results, frame):
         """
@@ -930,17 +1107,196 @@ class PlanetMenu(PlanetMiner):
             print("Cannot get positions because window properties were not found.")
             return []
 
+    def can_upgrade(self, upgrade_name):
+
+        
+        """Check if we can upgrade a planet based on the price and our networth cash"""
+        upgrade_prices = self.get_upgrade_prices()
+        networth = self.get_networth()
+        if networth:
+            # Get the cash value from the net worth data
+            cash = int(networth.get("Cash", 0))
+            print("Cash:", cash)
+            upgrade_price = upgrade_prices.get(upgrade_name, 0)
+            
+            # Check if we can afford the upgrade
+            return cash >= upgrade_price
+        return False
+    
+    def upgrade_planet(self, upgrade_type):
+        """
+        Attempts to upgrade the specified upgrade_type ('miningspeed', 'shipspeed', 'cargo').
+
+        Steps:
+        1. Run get_menu_data()
+        2. With results, run get_upgrade_prices(results, frame)
+        3. Get net worth using get_networth()
+        4. If cash >= upgrade price for upgrade_type, click the purchase button
+        """
+        # Map the input upgrade_type to the class names used in get_upgrade_prices()
+        upgrade_type_mapping = {
+            'miningspeed': 'Mining_rate_text',
+            'shipspeed': 'Ship_speed_text',
+            'cargo': 'Cargo_text'
+        }
+        # Get the corresponding class name
+        upgrade_class_name = upgrade_type_mapping.get(upgrade_type.lower())
+        if not upgrade_class_name:
+            print(f"Invalid upgrade type: {upgrade_type}")
+            return False
+
+        # Step 1: Run get_menu_data()
+        menu_data = self.get_menu_data()
+        if not menu_data:
+            print("Failed to get menu data.")
+            return False
+        results, frame = menu_data
+
+        # Step 2: With results, run get_upgrade_prices(results, frame)
+        upgrade_prices = self.get_upgrade_prices(results, frame)
+        if not upgrade_prices:
+            print("Failed to get upgrade prices.")
+            return False
+
+        # Step 3: Get net worth using get_networth()
+        networth = self.get_networth()
+        if not networth:
+            print("Failed to get net worth.")
+            return False
+        cash_str = networth.get("Cash", None)
+        if not cash_str:
+            print("Cash value not found in net worth data.")
+            return False
+        try:
+            cash = float(cash_str)
+        except ValueError:
+            print(f"Invalid cash value: {cash_str}")
+            return False
+
+        # Step 4: Check if cash >= upgrade price
+        upgrade_info = upgrade_prices.get(upgrade_class_name)
+        if not upgrade_info:
+            print(f"No upgrade information found for {upgrade_class_name}")
+            return False
+
+        upgrade_price_str = upgrade_info.get('price')
+        if not upgrade_price_str:
+            print(f"No upgrade price found for {upgrade_class_name}")
+            return False
+
+        # Clean the upgrade price string and convert to float
+        upgrade_price_str = upgrade_price_str.replace(',', '').replace(' ', '')
+        try:
+            upgrade_price = float(upgrade_price_str)
+        except ValueError:
+            print(f"Invalid upgrade price for {upgrade_class_name}: {upgrade_price_str}")
+            return False
+
+        if cash >= upgrade_price:
+            # Click on the purchase button
+            purchase_button_bbox = upgrade_info.get('purchase_button_bbox')
+            if purchase_button_bbox:
+                x1, y1, x2, y2 = purchase_button_bbox
+                # Click the center of the purchase button
+                x_click = x1 + (x2 - x1) // 2 + self.window.left
+                y_click = y1 + (y2 - y1) // 2 + self.window.top
+                pyautogui.click(x_click, y_click)
+                print(f"Upgraded {upgrade_type}.")
+                return True
+            else:
+                print(f"No purchase button bounding box found for {upgrade_class_name}")
+                return False
+        else:
+            print(f"Not enough cash to upgrade {upgrade_type}. Cash: {cash}, Upgrade price: {upgrade_price}")
+            return False
+        
+
+class Methods():
+    def __init__(self):
+        self.planets = Planets()
+        self.menu = PlanetMenu()
+    
+    def upgrade_mining(self, planet_name):
+        """
+        Upgrade the mining speed of the specified planet.
+        """
+        # Step 1: Open the planet menu
+        if not self.menu.is_open():
+            self.planets.open_planet_menu(planet_name)
+            time.sleep(1)
+        else:
+            print("Planet menu is already open.")
+            self.menu.close_menu()
+        
+        self.planets.open_planet_menu(planet_name)
+
+        upgraded = self.menu.upgrade_planet("miningspeed")
+        print("Upgraded mining speed:", upgraded)
+        self.menu.close_menu()
+        return upgraded
+    def upgrade_shipping_speed(self,planet_name):
+        """
+        Upgrade the shipping speed of the specified planet.
+        """
+        # Step 1: Open the planet menu
+        if not self.menu.is_open():
+            self.planets.open_planet_menu(planet_name)
+            time.sleep(1)
+        else:
+            print("Planet menu is already open.")
+            self.menu.close_menu()
+        
+        self.planets.open_planet_menu(planet_name)
+
+        upgraded = self.menu.upgrade_planet("shipspeed")
+        print("Upgraded shipping speed:", upgraded)
+        self.menu.close_menu()
+        return upgraded
+    
+    def upgrade_cargo(self,planet_name):
+        """
+        Upgrade the cargo capacity of the specified planet.
+        """
+        # Step 1: Open the planet menu
+        if not self.menu.is_open():
+            self.planets.open_planet_menu(planet_name)
+            time.sleep(1)
+        else:
+            print("Planet menu is already open.")
+            self.menu.close_menu()
+        
+        self.planets.open_planet_menu(planet_name)
+
+        upgraded = self.menu.upgrade_planet("cargo")
+        print("Upgraded cargo capacity:", upgraded)
+        self.menu.close_menu()
+        return upgraded
+    
+        
+        
 # Example usage
 if __name__ == "__main__":
 
-    menu = PlanetMenu()
+    # planets = Planets()
+    # menu = PlanetMenu()
+    methods = Methods()
+    methods.upgrade_mining("Acheron")
+
+    # purchased = planets.purchase_next()
+    # if purchased:
+    #     menu.close_menu()
+    # time.sleep(5)
+    # menu.get_menu_data()
+  
+    #Upgrade mining
+
     # print(menu.is_open())
-    for i in range(1):
-        menu.get_menu_data()
-        pos = menu.get_positions(9, menu.model)
-        pyautogui.click(pos[0][0]+(pos[0][2]-pos[0][0])/2, pos[0][1]+(pos[0][3]-pos[0][1])/2)
-        time.sleep(1)
-        menu.close_menu()
+    # for i in range(1):
+    #     menu.get_menu_data()
+    #     pos = menu.get_positions(9, menu.model)
+    #     pyautogui.click(pos[0][0]+(pos[0][2]-pos[0][0])/2, pos[0][1]+(pos[0][3]-pos[0][1])/2)
+    #     time.sleep(1)
+    #     menu.close_menu()
     # position = game.get_positions(2, game.model)
     # #hover mouse on position center
     # pyautogui.moveTo(position[0][0]+(position[0][2]-position[0][0])/2, position[0][1]+(position[0][3]-position[0][1])/2)
