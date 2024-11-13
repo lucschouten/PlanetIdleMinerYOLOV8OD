@@ -17,16 +17,17 @@ import re
 import matplotlib.pyplot as plt
 
 class PlanetMiner:
-    def __init__(self, model_path='Models/planets.pt'):
+    def __init__(self, ):
         # Target dimensions based on specified corners
         self.width = 800
         self.height = 800
         self.window = self.get_window()
         self.set_window_size()
         self.window_properties = self.get_window_properties()
-        self.model = YOLO(model_path)
+        # self.model = YOLO('Models/planets.pt')
+        self.model = YOLO('Models/icons_and_menus.pt')
         self.zoom_set = False
-        self.set_zoom()
+        # self.set_zoom()
         #print model class names
         # print(self.model.names)
         # Load the YOLOv8 model once during initialization
@@ -373,13 +374,13 @@ class Planets(PlanetMiner):
                 if self.can_purchase(planet_name):
                     self.purchase_locked_planet(position, planet_name)
                     print(f"Purchased {planet_name}")
-                    return  True
                 else:
                     print(f"Cannot afford {planet_name}.")
+                    return False
                 
         
-        print("No affordable locked planets available for purchase.")
-        return False
+        print("Could either purchase all planets or there were no planets it was not able to afford.")
+        return True
     
     def find_planet(self, planet_name):
         """
@@ -457,6 +458,9 @@ class PlanetMenu(PlanetMiner):
         self.class_names = self.model.names  # Get class names mapping from the model
         # print(self.class_names)
         print("Model class names:", self.class_names)
+
+        #Class variables
+        self.current_menu = None
 
     def is_open(self):
         """
@@ -1215,6 +1219,7 @@ class Methods():
     def __init__(self):
         self.planets = Planets()
         self.menu = PlanetMenu()
+        self.menu.set_zoom()
     
     def upgrade_mining(self, planet_name):
         """
@@ -1223,16 +1228,16 @@ class Methods():
         # Step 1: Open the planet menu
         if not self.menu.is_open():
             self.planets.open_planet_menu(planet_name)
+            self.menu.current_menu = planet_name
             time.sleep(1)
         else:
             print("Planet menu is already open.")
-            self.menu.close_menu()
-        
-        self.planets.open_planet_menu(planet_name)
-
+            if self.menu.current_menu != planet_name:
+                self.menu.close_menu()
+                self.planets.open_planet_menu(planet_name)
+                self.menu.current_menu = planet_name
         upgraded = self.menu.upgrade_planet("miningspeed")
         print("Upgraded mining speed:", upgraded)
-        self.menu.close_menu()
         return upgraded
     def upgrade_shipping_speed(self,planet_name):
         """
@@ -1241,18 +1246,18 @@ class Methods():
         # Step 1: Open the planet menu
         if not self.menu.is_open():
             self.planets.open_planet_menu(planet_name)
+            self.menu.current_menu = planet_name
             time.sleep(1)
         else:
             print("Planet menu is already open.")
-            self.menu.close_menu()
-        
-        self.planets.open_planet_menu(planet_name)
+            if self.menu.current_menu != planet_name:
+                self.menu.close_menu()
+                self.planets.open_planet_menu(planet_name)
+                self.menu.current_menu = planet_name
 
         upgraded = self.menu.upgrade_planet("shipspeed")
         print("Upgraded shipping speed:", upgraded)
-        self.menu.close_menu()
-        return upgraded
-    
+        return upgraded   
     def upgrade_cargo(self,planet_name):
         """
         Upgrade the cargo capacity of the specified planet.
@@ -1260,18 +1265,24 @@ class Methods():
         # Step 1: Open the planet menu
         if not self.menu.is_open():
             self.planets.open_planet_menu(planet_name)
+            self.menu.current_menu = planet_name
             time.sleep(1)
         else:
             print("Planet menu is already open.")
-            self.menu.close_menu()
-        
-        self.planets.open_planet_menu(planet_name)
+            if self.menu.current_menu != planet_name:
+                self.menu.close_menu()
+                self.planets.open_planet_menu(planet_name)
+                self.menu.current_menu = planet_name
 
         upgraded = self.menu.upgrade_planet("cargo")
         print("Upgraded cargo capacity:", upgraded)
-        self.menu.close_menu()
-        return upgraded
-    
+        return upgraded   
+    def purchase_unlocked(self):
+        """
+        Purchase the next unlocked planet.
+        """
+        purchased = self.planets.purchase_next()
+        return purchased
         
         
 # Example usage
@@ -1279,37 +1290,19 @@ if __name__ == "__main__":
 
     # planets = Planets()
     # menu = PlanetMenu()
-    methods = Methods()
-    methods.upgrade_mining("Acheron")
+    # methods = Methods()
+    # methods.upgrade_mining("Anadius")
+    # methods.upgrade_shipping_speed("Anadius")
+    # methods.upgrade_cargo("Anadius")
+    # methods.upgrade_mining("Drasta")
+    # methods.menu.close_menu()
+
+    game = PlanetMiner()
+    game.take_screenshot_and_predict("Resultspapa.png")
+
 
     # purchased = planets.purchase_next()
     # if purchased:
     #     menu.close_menu()
     # time.sleep(5)
     # menu.get_menu_data()
-  
-    #Upgrade mining
-
-    # print(menu.is_open())
-    # for i in range(1):
-    #     menu.get_menu_data()
-    #     pos = menu.get_positions(9, menu.model)
-    #     pyautogui.click(pos[0][0]+(pos[0][2]-pos[0][0])/2, pos[0][1]+(pos[0][3]-pos[0][1])/2)
-    #     time.sleep(1)
-    #     menu.close_menu()
-    # position = game.get_positions(2, game.model)
-    # #hover mouse on position center
-    # pyautogui.moveTo(position[0][0]+(position[0][2]-position[0][0])/2, position[0][1]+(position[0][3]-position[0][1])/2)
-
-    # # Click on the position
-    # pyautogui.click(position[0][0]+(position[0][2]-position[0][0])/2, position[0][1]+(position[0][3]-position[0][1])/2)
-
-
-    # time.sleep(2)  # Allow some time for the window to be activated and resized
- 
-    # for i in range(10):
-    #     # networth = game.get_networth()
-    #     # print("Extracted Net Worth Data:", networth)
-           
-    #     game.take_screenshot_and_predict(f"v3result{i}.png")
-    #     time.sleep(1)
