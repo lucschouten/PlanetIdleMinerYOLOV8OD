@@ -8,7 +8,7 @@ import re
 
 # Directory where screenshots will be saved
 # Planets 14-16 Zoom 1
-OUTPUT_DIR = "annotation_screenshots/managermenu/filters-on"
+OUTPUT_DIR = "annotation_screenshots/sellgalaxy/"
 # Number of screenshots to capture
 NUM_SCREENSHOTS = 100
 # Interval between screenshots in seconds
