@@ -1284,7 +1284,585 @@ class Methods():
         purchased = self.planets.purchase_next()
         return purchased
         
+
+    def do_arks(self):
+        return
+    
+class ManagerMenu:
+    def __init__(self, planet_miner):
+        #After every action that changes the frame, i should represent the frame
+        self.manager_menu_model = YOLO("Models/managermenu.pt")
+        self.icon_model = YOLO("Models/icons_and_menus.pt")
+        self.last_prediction = None
+        self.last_frame = None
+        self.planet_miner = planet_miner  # Pass in PlanetMiner to access window properties
+        print("manager_menu_model classes" , self.manager_menu_model.names)
+
+    def get_prediction(self,model, confidence=0.5):
+        """Take a screenshot of the MEmu window and save the prediction on the frame as prediction.png."""
+        # Ensure window properties are available
+        if not self.planet_miner.window_properties:
+            print("Window properties not found. Please ensure the MEmu window is active.")
+            return None, None
+
+        # Define the bounding box for the emulator window based on stored properties
+        top_left = self.planet_miner.window_properties["top_left"]
+        bottom_right = self.planet_miner.window_properties["bottom_right"]
+        bbox = (top_left[0], top_left[1], bottom_right[0], bottom_right[1])
+
+        # Capture a screenshot of only the specified MEmu window area
+        screenshot = ImageGrab.grab(bbox)
+        frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+        # Use YOLO model to detect icons in the MEmu window screenshot
+        results = model(frame, imgsz=640, conf=confidence)
+        self.last_prediction = results
+        self.last_frame = frame
+
+        # Annotate the frame with predictions
+        annotated_frame = results[0].plot()
+
+        # Save the annotated frame as prediction.png
+        cv2.imwrite("managermenu_prediction.png", annotated_frame)
+        print("Prediction saved as prediction.png")
+
+        return results, frame
+    def open_menu(self):
+        self.get_prediction(confidence=0.9, model = self.icon_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.icon_model.names.get(class_id, "Unknown")
+                if class_name == "Manager_menu":
+                    pyautogui.click(det.xywh[0][0], det.xywh[0][1])
+                    print("Opened the manager menu.")
+                    return True
+        return False
+    def is_open(self):
+        """
+        Check if the manager menu is open based on the detected icons.
+        """
+        self.get_prediction(confidence=0.9, model = self.manager_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "close_menu":  # Check for the close menu icon to determine if the menu is open
+                    return True
+        return False
+    def close_menu(self):
+        """
+        Close the manager menu by clicking on the close menu icon.
+        """
+        self.get_prediction(confidence=0.9, model = self.manager_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "close_menu":
+                    # Get the center coordinates of the close menu icon
+                    x_center, y_center, _, _ = map(int, det.xywh[0])
+                    # Click on the center of the close menu icon
+                    x_click = x_center + self.planet_miner.window.left
+                    y_click = y_center + self.planet_miner.window.top
+                    pyautogui.click(x_click, y_click)
+                    print("Closed the manager menu.")
+                    return True
+        return False
+    def get_current_planet(self):
+        """
+        OCR the name of the current planet based on the planet_name icon, extracting both
+        the planet number and name.
+        """
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "Planet_name":
+                    # Get bounding box coordinates
+                    x1, y1, x2, y2 = map(int, det.xyxy[0])
+                    x1 = x1 -3 # Adjusted to include the first letter
+                    y1 = y1 - 3
+                    x2 = x2 + 3
+                    y2 = y2 + 3
+                    # Crop the area containing the planet name
+                    planet_name_crop = self.last_frame[y1:y2, x1:x2]
+                    
+                    # Step 1: Upscale the cropped image to enhance resolution
+                    scale_percent = 300  # Scale up by 300%
+                    width = int(planet_name_crop.shape[1] * scale_percent / 100)
+                    height = int(planet_name_crop.shape[0] * scale_percent / 100)
+                    dim = (width, height)
+                    upscaled_crop = cv2.resize(planet_name_crop, dim, interpolation=cv2.INTER_CUBIC)
+
+                    # Step 2: Convert to grayscale
+                    gray = cv2.cvtColor(upscaled_crop, cv2.COLOR_BGR2GRAY)
+
+                    # Step 3: Apply thresholding to improve contrast
+                    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+                    # Convert to PIL Image for OCR
+                    pil_img = Image.fromarray(thresh)
+
+                    # Define OCR configuration for extracting alphanumeric text
+                    ocr_config = '--psm 7 --oem 3 -c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz. "'
+
+                    # Step 4: Perform OCR
+                    ocr_text = pytesseract.image_to_string(pil_img, config=ocr_config).strip()
+                    print("OCR text for planet name:", ocr_text)
+
+                    # Step 5: Use regex to extract the number and planet name
+                    match = re.match(r'(\d+)\.\s*([A-Za-z]+)', ocr_text)
+                    if match:
+                        planet_number = int(match.group(1))
+                        planet_name = match.group(2)
+                        print("Current planet number:", planet_number)
+                        print("Current planet name:", planet_name)
+                        return planet_number, planet_name
+                    else:
+                        print("Failed to parse planet number and name from OCR text:", ocr_text)
+                        return None
+        return None
+    
+    def get_current_manager_slots(self):
+        """OCR the number of current manager slots based on the detected icons."""
+        self.get_prediction(confidence=0.5,model = self.manager_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "Slots_text":
+                    # Get bounding box coordinates
+                    x1, y1, x2, y2 = map(int, det.xyxy[0])
+                    x1 = x1 - 3
+                    y1 = y1 - 3
+                    x2 = x2 + 3
+                    y2 = y2 + 3
+                    # Increase the width to the right of the Slots_text box
+                    extended_x1 = min(x2 + 1, self.last_frame.shape[1])
+                    extended_x2 = min(x2 + 60, self.last_frame.shape[1])
+                    extended_slots_text_crop = self.last_frame[y1:y2, extended_x1:extended_x2]
+
+                    # Step 1: Upscale the cropped image to enhance resolution
+                    scale_percent = 300  # Scale up by 300%
+                    width = int(extended_slots_text_crop.shape[1] * scale_percent / 100)
+                    height = int(extended_slots_text_crop.shape[0] * scale_percent / 100)
+                    dim = (width, height)
+                    upscaled_crop = cv2.resize(extended_slots_text_crop, dim, interpolation=cv2.INTER_CUBIC)
+
+                    # Step 2: Convert to grayscale
+                    gray = cv2.cvtColor(upscaled_crop, cv2.COLOR_BGR2GRAY)
+
+                    # Step 3: Apply thresholding to improve contrast
+                    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+                    # Convert to PIL Image for OCR
+                    pil_img = Image.fromarray(thresh)
+
+                    # Define OCR configuration for extracting numeric text
+                    ocr_config = '--psm 7 --oem 3 -c tessedit_char_whitelist="0123456789/"'
+
+                    # Step 4: Perform OCR
+                    ocr_text = pytesseract.image_to_string(pil_img, config=ocr_config).strip()
+                    print("OCR text for slots:", ocr_text)
+                    available_slots, total_slots = ocr_text.split('/')
+                    print("Available slots:", available_slots)
+                    print("Total slots:", total_slots)
+                    return int(available_slots), int(total_slots)
+    def unassign_planet(self):
+        """
+        Unassign the current planet by clicking on the assigned manager icon.
+        """
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "full_manager_slot":
+                    # Get the center coordinates of the detected icon
+                    x_center, y_center, _, _ = map(int, det.xywh[0])
+                    # Click on the center of the icon
+                    pyautogui.click(x_center, y_center)
+                    print("Unassigned current planet.")
+                    return True
         
+
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "empty_manager_slot":
+                    return True
+                
+        print("Full manager slot not found.")
+        return False
+    
+    def unassign_multiple_planets(self, planets_to_unassign:dict):
+        """Unassign multiple planets.
+        dict is key:value pair of planet_number:planet_name"""
+        next_button = None
+        previous_button = None
+
+        #next and previous button positions
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "Next_button":
+                    next_button = det.xywh[0]
+                elif class_name == "Previous_button":
+                    previous_button = det.xywh[0]
+
+        if next_button is None or previous_button is None:
+            print("Next or previous button not found.")
+            return False
+        
+
+        for planet_number, planet_name in planets_to_unassign.items():
+            # Get the current planet number and name
+
+            current_planet_number, current_planet_name = self.get_current_planet()
+            # find the difference between the current planet number and the planet_number
+            difference = planet_number - current_planet_number
+            #if the difference is negative, click the previous button
+            if difference < 0:
+                for _ in range(abs(difference)):
+                    pyautogui.click(previous_button[0], previous_button[1])
+                    time.sleep(0.05)
+                #if the difference is positive, click the next button
+            elif difference > 0:
+                for _ in range(difference):
+                    pyautogui.click(next_button[0], next_button[1])
+                    time.sleep(0.05)
+                #if the difference is 0, unassign the current planet
+            
+            self.get_prediction(model = self.manager_menu_model)
+            current_planet_number, current_planet_name = self.get_current_planet()
+            # print(f"current planet name: {current_planet_name}, planet name: {planet_name}")
+            if current_planet_name.lower() == planet_name.lower():
+                # print(f"Unassigning planet {planet_name}.")
+                if self.unassign_planet():
+                    # print(f"Unassigned planet {planet_name}.")
+                    time.sleep(0.05)
+                else:
+                    print(f"Failed to unassign planet {planet_name}.")
+
+        return True
+    
+    def open_filters(self):
+        """Open the filters menu by clicking on the filter icon."""
+
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "Manager_filter":
+                    # Get the center coordinates of the detected icon
+                    x_center, y_center, _, _ = map(int, det.xywh[0])
+                    # Click on the center of the icon
+                    pyautogui.click(x_center, y_center)
+                    print("Opened filters menu.")
+                    return True
+                
+    def manager_filters_is_open(self):
+        """Check if the manager filters menu is open based on the detected icons."""
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "Clear_all_button":
+                    return True
+        return False
+    
+    def close_manager_filters(self):
+        """Close the manager filters menu by clicking on the close icon."""
+
+        if self.manager_filters_is_open():
+            if self.last_prediction:
+                for det in self.last_prediction[0].boxes:
+                    class_id = int(det.cls[0])
+                    class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                    if class_name == "Manager_filter":
+                        # Get the center coordinates of the detected icon
+                        x_center, y_center, _, _ = map(int, det.xywh[0])
+                        # Click on the center of the icon
+                        pyautogui.click(x_center, y_center)
+                        print("Closed filters menu.")
+                        return True
+        else:
+            print("Manager filters menu is not open.")
+            return True
+        return False
+    
+    def set_manager_filters(self):
+        return
+    
+    def assign_manager(self):
+        """Finds the first available manager slot and assigns the manager to the current planet.
+        If no slots are available, returns False.
+        If no available manager slots are found scroll down and try again.
+        """
+        self.get_prediction(confidence=0.9, model = self.manager_menu_model)
+        available_slots, total_slots = self.get_current_manager_slots()
+        if available_slots >= total_slots:
+            print("All manager slots are full.")
+            return False
+        
+        # Find the first available manager slot
+        available_manager = self.find_next_available_manager()
+        # Click on the center of the available manager slot
+        if available_manager:
+            x_center = available_manager[0] + (available_manager[2] - available_manager[0]) // 2
+            y_center = available_manager[1] + (available_manager[3] - available_manager[1]) // 2
+            pyautogui.click(x_center, y_center)
+            print("Assigned manager to the current planet.")
+            return True
+    
+        return False
+    
+    def find_next_available_manager(self, retry=False):
+        """Find the next available manager box from left to right, top to bottom."""
+        # Get predictions with high confidence
+        self.get_prediction(confidence=0.9,model = self.manager_menu_model)
+
+        if self.last_prediction:
+            assigned_det = None
+            # Sort detections to prioritize left-to-right, top-to-bottom order
+            sorted_boxes = sorted(self.last_prediction[0].boxes, key=lambda d: (d.xyxy[0][1], d.xyxy[0][0]))
+            
+            # Loop through sorted detections and print each detected class and its position
+            for det in sorted_boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                # print(f"Detected class '{class_name}' with bounding box {det.xyxy[0]}")
+
+                if class_name == "Unassigned_manager":
+                    # Return the bounding box of the next 'Unassigned_manager'
+                    x1, y1, x2, y2 = map(int, det.xyxy[0])
+                    # print(f"Found 'Unassigned_manager' at ({x1}, {y1}, {x2}, {y2})")
+                    return (x1, y1, x2, y2)
+
+                # Save the first 'Assigned_manager' to enable scrolling later if needed
+                if class_name == "Assigned_manager" and assigned_det is None:
+                    assigned_det = det
+                    # print(f"Found an 'Assigned_manager' at {assigned_det.xyxy[0]}")
+
+            # If no 'Unassigned_manager' was found, attempt to scroll up if not already retried
+            if not retry and assigned_det is not None:
+                x_center, y_center, _, box_height = map(int, assigned_det.xywh[0])
+                # print(f"No 'Unassigned_manager' found. Scrolling up from ({x_center}, {y_center})")
+                
+                # Perform click-and-drag to scroll up
+                pyautogui.moveTo(x_center, y_center)
+                pyautogui.mouseDown()
+                pyautogui.dragRel(0, -box_height, duration=0.2)
+                pyautogui.mouseUp()
+                # print("Scrolled up by dragging an 'Assigned_manager'.")
+
+                # Run the function again after scrolling
+                self.get_prediction(confidence=0.9,model = self.manager_menu_model)
+                return self.find_next_available_manager(retry=True)
+
+        print("No 'Unassigned_manager' found.")
+        return None
+
+
+
+
+
+    def assign_managers(self, planets_to_assign: dict):
+        """Assign managers to multiple planets.
+        dict is key:value pair of planet_number:planet_name"""
+        next_button = None
+        previous_button = None
+
+        # next and previous button positions
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+                if class_name == "Next_button":
+                    next_button = det.xywh[0]
+                elif class_name == "Previous_button":
+                    previous_button = det.xywh[0]
+
+        if next_button is None or previous_button is None:
+            print("Next or previous button not found.")
+            return False
+
+        for planet_number, planet_name in sorted(planets_to_assign.items(), reverse=True):
+            # Get the current planet number and name
+            self.get_prediction(model = self.manager_menu_model)
+            current_planet_data = self.get_current_planet()
+            print("current planet data", current_planet_data)
+            if not current_planet_data:
+                print(f"Failed to get the current planet information for planet '{planet_name}'. Skipping.")
+                continue
+
+            current_planet_number, current_planet_name = current_planet_data
+
+            # find the difference between the current planet number and the planet_number
+            difference = planet_number - current_planet_number
+            # if the difference is negative, click the previous button
+            if difference < 0:
+                for _ in range(abs(difference)):
+                    pyautogui.click(previous_button[0], previous_button[1])
+                    time.sleep(0.05)
+                # if the difference is positive, click the next button
+            elif difference > 0:
+                for _ in range(difference):
+                    pyautogui.click(next_button[0], next_button[1])
+                    time.sleep(0.05)
+                # if the difference is 0, assign the current planet
+
+            self.get_prediction(model = self.manager_menu_model)
+            current_planet_data = self.get_current_planet()
+            if not current_planet_data:
+                print(f"Failed to get the current planet information after navigation for planet '{planet_name}'. Skipping.")
+                continue
+
+            current_planet_number, current_planet_name = current_planet_data
+            print(f"current planet name: {current_planet_name}, planet name: {planet_name}")
+            if current_planet_name.lower() == planet_name.lower():
+                print(f"Assigning planet {planet_name}.")
+                self.assign_manager()
+            #     if self.assign_manager():
+            #         # print(f"Assigned planet {planet_name}.")
+            #         time.sleep(0.05)
+            #     else:
+            #         print(f"Failed to assign planet {planet_name}.")
+
+            #finally scroll up again.
+            #move mouse to the center of the lower half of the screen
+            #find the position of any Assigned or Unassigned manager
+
+        self.get_prediction(model = self.manager_menu_model)
+        for det in self.last_prediction[0].boxes:
+            class_id = int(det.cls[0])
+            class_name = self.manager_menu_model.names.get(class_id, "Unknown")
+            print(f"Detected class '{class_name}' with bounding box {det.xyxy[0]}")
+
+            if class_name == "Unassigned_manager":
+                # Return the bounding box of the next 'Unassigned_manager'
+                
+                print(f"Found 'Unassigned_manager' at ({x1}, {y1}, {x2}, {y2})")
+                #Move to the center 
+                x_center = x1 + (x2 - x1) // 2
+                y_center = y1 + (y2 - y1) // 2
+                pyautogui.moveTo(x_center, y_center)
+                break
+
+            # Save the first 'Assigned_manager' to enable scrolling later if needed
+            if class_name == "Assigned_manager":
+                x1, y1, x2, y2 = map(int, det.xyxy[0])
+                x_center = x1 + (x2 - x1) // 2
+                y_center = y1 + (y2 - y1) // 2
+                pyautogui.moveTo(x_center, y_center)
+                break
+
+        #scrol up
+        pyautogui.scroll(1)
+        time.sleep(0.05)
+        return
+
+class MothershipMenu:
+    def __init__(self, planet_miner):
+        #After every action that changes the frame, i should represent the frame
+        self.icon_model = YOLO("Models/icons_and_menus.pt")
+        self.mothership_menu_model = YOLO("Models/simplemothership.pt")
+        self.last_prediction = None
+        self.last_frame = None
+        self.planet_miner = planet_miner  # Pass in PlanetMiner to access window properties
+        print("mothership menu classes" , self.mothership_menu_model.names)
+        pass
+
+    def get_prediction(self,confidence=0.5, model = None):
+        """Take a screenshot of the MEmu window and save the prediction on the frame as prediction.png."""
+        # Ensure window properties are available
+        if not self.planet_miner.window_properties:
+            print("Window properties not found. Please ensure the MEmu window is active.")
+            return None, None
+
+        # Define the bounding box for the emulator window based on stored properties
+        top_left = self.planet_miner.window_properties["top_left"]
+        bottom_right = self.planet_miner.window_properties["bottom_right"]
+        bbox = (top_left[0], top_left[1], bottom_right[0], bottom_right[1])
+
+        # Capture a screenshot of only the specified MEmu window area
+        screenshot = ImageGrab.grab(bbox)
+        frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+        # Use YOLO model to detect icons in the MEmu window screenshot
+        results = model.predict(frame, imgsz=640, conf=confidence)
+        self.last_prediction = results
+        self.last_frame = frame
+
+        # Annotate the frame with predictions
+        annotated_frame = results[0].plot()
+
+        # Save the annotated frame as prediction.png
+        cv2.imwrite("mothership_prediction.png", annotated_frame)
+        print("Prediction saved as mothership_prediction.png")
+
+        return results, frame
+    def open_menu(self):
+        self.get_prediction(confidence=0.9, model = self.icon_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.icon_model.names.get(class_id, "Unknown")
+                if class_name == "Mothership_menu":
+                    pyautogui.click(det.xywh[0][0], det.xywh[0][1])
+                    print("Opened the mothership menu.")
+                    return True
+        return False
+    def is_open(self):
+        """
+        Check if the mothership menu is open based on the detected icons.
+        """
+        self.get_prediction(confidence=0.9, model = self.mothership_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.mothership_menu_model.names.get(class_id, "Unknown")
+                if class_name == "close_menu-4cbs":
+                    return True
+        return False
+    def close_menu(self):
+        """"""
+        self.get_prediction(confidence=0.9, model = self.mothership_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.mothership_menu_model.names.get(class_id, "Unknown")
+                if class_name == "close_menu-4cbs":
+                    pyautogui.click(det.xywh[0][0], det.xywh[0][1])
+                    print("Closed the mothership menu.")
+                    return True
+        return False
+
+    def sell_galaxy(self):
+        """Sell the galaxy."""
+
+        self.get_prediction(confidence=0.9, model = self.mothership_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.mothership_menu_model.names.get(class_id, "Unknown")
+                if class_name == "sell_galaxy_button":
+                    pyautogui.click(det.xywh[0][0], det.xywh[0][1])
+                    time.sleep(0.5)
+        
+        self.get_prediction(confidence=0.9, model = self.mothership_menu_model)
+        if self.last_prediction:
+            for det in self.last_prediction[0].boxes:
+                class_id = int(det.cls[0])
+                class_name = self.mothership_menu_model.names.get(class_id, "Unknown")
+                if class_name == "sell_button":
+                    pyautogui.moveTo(det.xywh[0][0], det.xywh[0][1])
+                    print("Sold the galaxy.")
+                    return True
+        return False
+
 # Example usage
 if __name__ == "__main__":
 
@@ -1298,7 +1876,33 @@ if __name__ == "__main__":
     # methods.menu.close_menu()
 
     game = PlanetMiner()
-    game.take_screenshot_and_predict("Resultspapa.png")
+    managermenu = ManagerMenu(game)
+
+    managermenu.get_prediction(confidence= 0.9, model = managermenu.icon_model)
+    managermenu.open_menu()
+    time.sleep(1)
+    managermenu.close_menu()
+    # managermenu.get_current_manager_slots()
+    # box = managermenu.find_next_available_manager()
+    # managermenu.assign_manager()
+    # managermenu.assign_managers({1:"Balor", 2:"Drasta", 3:"Anadius", 4:"Dholen",5:"Verr",6:"Newton",7:"Widow"})
+    # managermenu.close_menu()
+
+    galaxy_menu = MothershipMenu(game)
+    galaxy_menu.get_prediction(model = galaxy_menu.icon_model)
+    galaxy_menu.open_menu()
+    if galaxy_menu.is_open():
+        galaxy_menu.sell_galaxy()
+        # galaxy_menu.close_menu()
+    #hover over the center of the  box
+    # managermenu.open_filters()
+    # managermenu.get_prediction()
+    # managermenu.close_manager_filters()
+    # managermenu.is_open()
+    # managermenu.get_current_planet()
+    # managermenu.unassign_planet()
+    # managermenu.unassign_multiple_planets({1:"Balor", 2:"Drasta", 3:"Anadius"})
+    # game.take_screenshot_and_predict("Resultspapa.png")
 
 
     # purchased = planets.purchase_next()
